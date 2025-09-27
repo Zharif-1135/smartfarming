@@ -1,0 +1,652 @@
+// src/pages/Dashboard.js
+import { useEffect, useMemo, useState } from "react";
+import { ref, onValue, set } from "firebase/database";
+import { db } from "../firebase";
+import Header from "../components/Header";
+import WeatherCard from "../components/WeatherCard";
+import { classify } from "../utils/Threshold";
+import { motion } from "framer-motion";
+import {
+  Fish,
+  Sprout,
+  Home,
+  Bug,
+  Activity,
+  Thermometer,
+  Droplet,
+  Gauge,
+  Wind,
+  Sun,
+  Cloud,
+  CloudRain,
+  CloudSun,
+  AlertTriangle,
+  CheckCircle2,
+  Wifi,
+  WifiOff,
+  Clock,
+  ArrowUpRight,
+  Waves,
+} from "lucide-react";
+
+// ===================== KONFIGURASI ACCUWEATHER ======================
+// Samakan dengan konfigurasi kamu.
+// API KEY: https://developer.accuweather.com/
+// LOCATION_KEY contoh: 205120 (Lhokseumawe)
+const ACCU_API_KEY = "zpka_dd013fe7458d4c34ba195d242ea840d4_1a3c2bfa";
+const ACCU_LOCATION_KEY = "205120";
+
+// Helper arah angin (derajat -> kompas)
+const toCompass = (deg) => {
+  if (!Number.isFinite(deg)) return "-";
+  const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const idx = Math.round(deg / 22.5) % 16;
+  return dirs[idx];
+};
+
+export default function Dashboard() {
+  const [data, setData] = useState({
+    hidroponik: { suhu: "-", ph: "-" },
+    kandang: { suhu: "-", kelembaban: "-", amonia: "-" },
+    kolam: { suhu: "-", ph: "-", oksigen: "-" },
+    ulat: { suhu: "-", kelembaban: "-", intensitas_cahaya: "-" },
+  });
+
+  const [lastUpdate, setLastUpdate] = useState(Date.now());
+  const [alerts, setAlerts] = useState([]);
+
+  // =============== CUACA (AccuWeather — kondisi lengkap) ===============
+  const [wxNow, setWxNow] = useState(null);
+  const [wxDaily, setWxDaily] = useState(null);
+  const [wxLoading, setWxLoading] = useState(true);
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadWeather() {
+      try {
+        setWxLoading(true);
+        // Current conditions (detail)
+        const nowRes = await fetch(
+          `https://dataservice.accuweather.com/currentconditions/v1/${ACCU_LOCATION_KEY}?apikey=${ACCU_API_KEY}&details=true&language=id`
+        );
+        const now = await nowRes.json();
+
+        // 1-Day Forecast (detail)
+        const d1Res = await fetch(
+          `https://dataservice.accuweather.com/forecasts/v1/daily/1day/${ACCU_LOCATION_KEY}?apikey=${ACCU_API_KEY}&details=true&metric=true&language=id`
+        );
+        const d1 = await d1Res.json();
+
+        if (!canceled) {
+          setWxNow(Array.isArray(now) ? now[0] : null);
+          setWxDaily(d1?.DailyForecasts?.[0] || null);
+        }
+      } catch (e) {
+        console.error("Gagal ambil data cuaca:", e);
+      } finally {
+        if (!canceled) setWxLoading(false);
+      }
+    }
+    if (ACCU_API_KEY && ACCU_LOCATION_KEY) loadWeather();
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  // ===================== SENSOR REALTIME & HISTORY =====================
+  useEffect(() => {
+    const sensorRef = ref(db, "sensor");
+    const unsub = onValue(sensorRef, (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        setData(val);
+        const ts = Date.now();
+        setLastUpdate(ts);
+
+        // simpan data harian (ringan)
+        const today = new Date().toISOString().split("T")[0];
+        const historyRef = ref(db, `history/${today}`);
+        set(historyRef, val);
+
+        // hitung peringatan
+        const newAlerts = generateAlerts(val, ts);
+        setAlerts(newAlerts.slice(0, 10));
+      } else {
+        setAlerts([
+          {
+            id: "no-data",
+            severity: "danger",
+            title: "Data sensor tidak ditemukan",
+            detail:
+              "Tidak ada data sensor di database. Periksa koneksi perangkat atau path 'sensor'.",
+          },
+        ]);
+      }
+    });
+
+    return () => unsub();
+  }, []);
+
+  // ========================= UTIL & STATUS ============================
+  const toNum = (v) => {
+    if (v === "-" || v === null || v === undefined || v === "") return NaN;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  const getStatus = (domain, metric, value, extras = {}, lastUpdateTime = lastUpdate) => {
+    const isMati =
+      Date.now() - lastUpdateTime > 60000 ||
+      value === "-" ||
+      value === null ||
+      value === undefined ||
+      Number.isNaN(toNum(value));
+    if (isMati) {
+      return { label: "Mati", color: "bg-gray-500", bg: "bg-gray-100", severity: "danger" };
+    }
+
+    const res = classify(domain, metric, toNum(value), extras);
+    const map = {
+      ok: { label: "Optimal", color: "bg-green-500", bg: "bg-green-50", severity: "info" },
+      warning: { label: "Waspada", color: "bg-yellow-500", bg: "bg-yellow-50", severity: "warning" },
+      danger: { label: "Bahaya", color: "bg-red-500", bg: "bg-red-50", severity: "danger" },
+      unknown: { label: "—", color: "bg-gray-400", bg: "bg-white", severity: "info" },
+    };
+    return map[res.level] || map.unknown;
+  };
+
+  function generateAlerts(val, nowTime) {
+    const list = [];
+    const pushAlert = (id, severity, title, detail) => {
+      list.push({ id, severity, title, detail });
+    };
+
+    const sections = ["kolam", "hidroponik", "kandang", "ulat"];
+    sections.forEach((s) => {
+      if (!val[s]) {
+        pushAlert(
+          `${s}-missing`,
+          "danger",
+          `${capitalize(s)}: data tidak tersedia`,
+          `Path sensor "${s}" tidak ditemukan atau offline.`
+        );
+      }
+    });
+
+    const checkParam = (domain, metric, raw, extras = {}) => {
+      const num = toNum(raw);
+      if (Number.isNaN(num)) return;
+      const res = classify(domain, metric, num, extras);
+      if (res.level !== "ok") {
+        pushAlert(
+          `${domain}-${metric}`,
+          res.level,
+          `${capitalize(domain)}: ${metric.replace(/_/g, " ")} tidak optimal`,
+          res.message
+        );
+      }
+    };
+
+    // kolam
+    checkParam("kolam", "suhu", val.kolam?.suhu);
+    checkParam("kolam", "ph", val.kolam?.ph);
+    checkParam("kolam", "oksigen", val.kolam?.oksigen);
+
+    // hidroponik
+    checkParam("hidroponik", "suhu", val.hidroponik?.suhu);
+    checkParam("hidroponik", "ph", val.hidroponik?.ph);
+
+    // kandang (heat stress pertimbangkan kelembaban)
+    checkParam("kandang", "suhu", val.kandang?.suhu, {
+      kelembaban: toNum(val.kandang?.kelembaban),
+    });
+    checkParam("kandang", "kelembaban", val.kandang?.kelembaban);
+    checkParam("kandang", "amonia", val.kandang?.amonia);
+
+    // ulat
+    checkParam("ulat", "suhu", val.ulat?.suhu);
+    checkParam("ulat", "kelembaban", val.ulat?.kelembaban);
+    checkParam("ulat", "intensitas_cahaya", val.ulat?.intensitas_cahaya);
+
+    // sensor stale
+    if (Date.now() - nowTime > 60000) {
+      pushAlert(
+        "data-stale",
+        "danger",
+        "Data tidak up-to-date",
+        "Tidak menerima data baru dalam 60 detik. Periksa koneksi."
+      );
+    }
+
+    if (list.length === 0) {
+      list.push({
+        id: "ok",
+        severity: "info",
+        title: "Semua parameter normal",
+        detail: "Tidak ditemukan anomali. Sistem bekerja normal.",
+      });
+    }
+
+    return list;
+  }
+
+  const overallSeverity = (alertsArr) => {
+    if (!alertsArr || alertsArr.length === 0) return "info";
+    if (alertsArr.some((a) => a.severity === "danger")) return "danger";
+    if (alertsArr.some((a) => a.severity === "warning")) return "warning";
+    return "info";
+  };
+
+  const getSystemStatusBoxes = (alertsList) => {
+    const sections = ["kolam", "hidroponik", "kandang", "ulat"];
+    const map = {};
+    sections.forEach((s) => (map[s] = "info"));
+
+    let globalSeverity = "info";
+    (alertsList || []).forEach((a) => {
+      const id = a.id || "";
+      const sev = a.severity;
+      if (id === "data-stale" || id === "no-data") {
+        if (sev === "danger") globalSeverity = "danger";
+        else if (sev === "warning" && globalSeverity !== "danger") globalSeverity = "warning";
+      }
+      sections.forEach((s) => {
+        if (id.startsWith(s)) {
+          if (sev === "danger") map[s] = "danger";
+          else if (sev === "warning" && map[s] !== "danger") map[s] = "warning";
+        }
+      });
+    });
+
+    const severityOrder = { danger: 0, warning: 1, info: 2 };
+    const boxes = [];
+    Object.keys(map)
+      .map((s) => ({ section: s, severity: map[s] }))
+      .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
+      .forEach((p) => {
+        if (p.severity !== "info")
+          boxes.push({ id: p.section, label: capitalize(p.section), severity: p.severity });
+      });
+
+    if (boxes.length === 0 && globalSeverity === "info") {
+      return [{ id: "all-ok", label: "Semua sistem online", severity: "info" }];
+    }
+
+    if (globalSeverity !== "info") {
+      boxes.unshift({
+        id: "global",
+        label: globalSeverity === "danger" ? "Masalah jaringan / data" : "Peringatan sistem",
+        severity: globalSeverity,
+      });
+    }
+
+    return boxes.slice(0, 4);
+  };
+
+  // ========================= UI COMPONENTS ============================
+  const Badge = ({ severity, children }) => {
+    const map = {
+      danger: "bg-red-500 text-white",
+      warning: "bg-yellow-500 text-white",
+      info: "bg-emerald-600 text-white",
+    };
+    return (
+      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${map[severity] || ""}`}>
+        {children}
+      </span>
+    );
+  };
+
+  const CategoryCard = ({ title, items, status, icon: Icon }) => (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      whileHover={{ y: -2 }}
+      className={`relative overflow-hidden rounded-2xl border shadow-sm ${status.bg}`}
+    >
+      <div className="absolute -right-6 -top-6 opacity-10">
+        <Icon className="w-24 h-24" />
+      </div>
+      <div className="p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Icon className="w-5 h-5 text-emerald-700" />
+            <h2 className="font-bold text-lg">{title}</h2>
+          </div>
+          <Badge severity={status.severity}>{status.label}</Badge>
+        </div>
+
+        <div className="text-sm w-full mt-1 divide-y divide-gray-200/70 bg-white/60 rounded-xl border">
+          {items.map((item, index) => (
+            <div key={index} className="flex justify-between items-center py-2 px-3">
+              <div className="flex items-center gap-2 text-gray-700">
+                {item.icon}
+                <span>{item.label}</span>
+              </div>
+              <div className="font-semibold">
+                {item.value} {item.unit}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </motion.div>
+  );
+
+  const PeringatanTerbaru = ({ alertsList }) => {
+    const sev = overallSeverity(alertsList);
+    const styleMap = {
+      danger: "bg-red-50 border-red-400 text-red-800",
+      warning: "bg-yellow-50 border-yellow-400 text-yellow-800",
+      info: "bg-emerald-50 border-emerald-400 text-emerald-800",
+    };
+    const MAX = 10;
+    const toShow = (alertsList || []).slice(0, MAX);
+    const hiddenCount = Math.max(0, (alertsList?.length || 0) - MAX);
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={`w-full p-4 rounded-2xl border ${styleMap[sev]}`}
+      >
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            {sev === "danger" ? (
+              <AlertTriangle className="w-5 h-5" />
+            ) : sev === "warning" ? (
+              <CloudSun className="w-5 h-5" />
+            ) : (
+              <CheckCircle2 className="w-5 h-5" />
+            )}
+            <h2 className="font-bold text-lg">Peringatan Terbaru</h2>
+          </div>
+          <Badge severity={sev}>{sev.toUpperCase()}</Badge>
+        </div>
+
+        <div className="mt-4 grid gap-2 max-h-72 overflow-y-auto">
+          {toShow.map((a) => (
+            <div
+              key={a.id}
+              className="p-3 rounded-xl border bg-white/70 flex items-start justify-between"
+            >
+              <div>
+                <div className="font-semibold">{a.title}</div>
+                <div className="text-xs text-gray-700 mt-1">{a.detail}</div>
+              </div>
+              <span
+                className={`text-xs px-2 py-1 rounded font-semibold ${
+                  a.severity === "danger"
+                    ? "bg-red-100 text-red-700"
+                    : a.severity === "warning"
+                    ? "bg-yellow-100 text-yellow-800"
+                    : "bg-emerald-100 text-emerald-700"
+                }`}
+              >
+                {a.severity.toUpperCase()}
+              </span>
+            </div>
+          ))}
+          {hiddenCount > 0 && (
+            <div className="text-center text-sm text-gray-600 py-2">
+              +{hiddenCount} peringatan lainnya…
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
+  };
+
+  // ========================= STATUS DOMAIN ============================
+  const kolamStatus = getStatus("kolam", "suhu", data.kolam.suhu);
+  const hidroStatus = getStatus("hidroponik", "suhu", data.hidroponik.suhu);
+  const kandangStatus = getStatus("kandang", "suhu", data.kandang.suhu, {
+    kelembaban: toNum(data.kandang.kelembaban),
+  });
+  const ulatStatus = getStatus("ulat", "suhu", data.ulat.suhu);
+
+  const systemBoxes = getSystemStatusBoxes(alerts);
+
+  const timeAgo = useMemo(() => {
+    const diff = Date.now() - lastUpdate;
+    if (diff < 1500) return "baru saja";
+    const s = Math.floor(diff / 1000);
+    if (s < 60) return `${s} dtk lalu`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m} mnt lalu`;
+    const h = Math.floor(m / 60);
+    return `${h} jam lalu`;
+  }, [lastUpdate]);
+
+  // ========================= WEATHER VIEW (detailed) ==================
+  const WeatherDetail = () => {
+    const now = wxNow;
+    const d1 = wxDaily;
+
+    const uv = now?.UVIndex;
+    const uvCat = now?.UVIndexText || "-";
+    const windSp = now?.Wind?.Speed?.Metric?.Value;
+    const windDir = now?.Wind?.Direction?.Degrees;
+    const gust = now?.WindGust?.Speed?.Metric?.Value;
+    const humid = now?.RelativeHumidity;
+    const dew = now?.DewPoint?.Metric?.Value;
+    const temp = now?.Temperature?.Metric?.Value;
+    const realFeel = now?.RealFeelTemperature?.Metric?.Value;
+    const vis = now?.Visibility?.Metric?.Value;
+    const cloudCover = now?.CloudCover;
+    const pressure = now?.Pressure?.Metric?.Value;
+    const ceiling = now?.Ceiling?.Metric?.Value;
+
+    const rainProb = d1?.Day?.PrecipitationProbability ?? d1?.Night?.PrecipitationProbability;
+    const tStormProb = d1?.Day?.ThunderstormProbability ?? d1?.Night?.ThunderstormProbability;
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-2xl border bg-white/80 p-4 shadow-sm"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Sun className="w-5 h-5 text-amber-500" />
+            <h3 className="font-semibold">Kondisi Cuaca Lengkap</h3>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-gray-600">
+            <Clock className="w-4 h-4" />
+            {now?.LocalObservationDateTime
+              ? new Date(now.LocalObservationDateTime).toLocaleString()
+              : "—"}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+          <MetricRow icon={<Thermometer className="w-4 h-4" />} label="Suhu" value={fmt(temp, "°C")} />
+          <MetricRow icon={<Thermometer className="w-4 h-4" />} label="Suhu Seperti®" value={fmt(realFeel, "°C")} />
+          <MetricRow icon={<Droplet className="w-4 h-4" />} label="Kelembaban" value={fmt(humid, "%")} />
+          <MetricRow icon={<Droplet className="w-4 h-4" />} label="Titik Embun" value={fmt(dew, "°C")} />
+          <MetricRow icon={<Sun className="w-4 h-4" />} label="UV Index" value={`${uv ?? "-"} (${uvCat})`} />
+          <MetricRow icon={<Cloud className="w-4 h-4" />} label="Tutupan Awan" value={fmt(cloudCover, "%")} />
+          <MetricRow icon={<Wind className="w-4 h-4" />} label="Angin" value={`${fmt(windSp, "km/j")}, ${toCompass(windDir)}`} />
+          <MetricRow icon={<Wind className="w-4 h-4" />} label="Tiupan" value={fmt(gust, "km/j")} />
+          <MetricRow icon={<Gauge className="w-4 h-4" />} label="Tekanan" value={fmt(pressure, "mb")} />
+          <MetricRow icon={<Cloud className="w-4 h-4" />} label="Tinggi Awan" value={fmt(ceiling, "m")} />
+          <MetricRow icon={<CloudRain className="w-4 h-4" />} label="Prob. Hujan" value={fmt(rainProb, "%")} />
+          <MetricRow icon={<AlertTriangle className="w-4 h-4" />} label="Prob. Badai" value={fmt(tStormProb, "%")} />
+        </div>
+
+        {d1 && (
+          <div className="mt-3 text-xs text-gray-700">
+            <div className="flex items-center gap-2">
+              <CloudSun className="w-4 h-4 text-sky-500" />
+              <span>
+                Siang: {d1?.Day?.ShortPhrase || "-"}; Malam: {d1?.Night?.ShortPhrase || "-"}
+              </span>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    );
+  };
+
+  const MetricRow = ({ icon, label, value }) => (
+    <div className="flex items-center justify-between rounded-lg border bg-white/60 px-3 py-2">
+      <div className="flex items-center gap-2 text-gray-700">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <span className="font-semibold">{value}</span>
+    </div>
+  );
+
+  const fmt = (v, unit) => (Number.isFinite(v) ? `${v.toFixed?.(unit === "m" ? 0 : 1)} ${unit}` : "-");
+
+  // =============================== RENDER ==============================
+  return (
+    <div className="flex flex-col w-full">
+      <Header />
+
+      {/* Header Top */}
+      <div className="px-6 pt-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-emerald-100">
+              <Activity className="w-6 h-6 text-emerald-700" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Dashboard Smart Farming</h1>
+              <div className="text-sm text-gray-600">
+                Pemantauan real-time — <span className="inline-flex items-center gap-1">
+                  <Clock className="w-4 h-4" /> diperbarui {timeAgo}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* System status bar */}
+          <div className="flex items-center gap-2 flex-wrap justify-start md:justify-end">
+            {systemBoxes.map((b) => {
+              const map = {
+                danger: "bg-red-500 text-white",
+                warning: "bg-yellow-500 text-white",
+                info: "bg-emerald-600 text-white",
+              };
+              return (
+                <motion.div
+                  key={b.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`${map[b.severity]} px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1 shadow`}
+                >
+                  {b.severity === "danger" ? <WifiOff className="w-4 h-4" /> : <Wifi className="w-4 h-4" />}
+                  {b.label}
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* GRID */}
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-5 p-6">
+        {/* Kartu Domain */}
+        {/* PENYESUAIAN:
+          Kelas grid di bawah diubah dari `lg:grid-cols-4` menjadi `xl:grid-cols-4`.
+          Ini memperbaiki masalah di mana 4 kartu dipaksa masuk ke satu kolom pada layar tablet (ukuran lg),
+          sehingga membuat tampilan lebih konsisten di semua perangkat.
+        */}
+        <div className="xl:col-span-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <CategoryCard
+            title="Kolam Ikan"
+            icon={Fish}
+            items={[
+              { label: "Suhu", value: data.kolam.suhu, unit: "°C", icon: <Thermometer className="w-4 h-4 text-emerald-700" /> },
+              { label: "pH", value: data.kolam.ph, unit: "", icon: <Gauge className="w-4 h-4 text-emerald-700" /> },
+              { label: "Oksigen", value: data.kolam.oksigen, unit: "mg/L", icon: <Waves className="w-4 h-4 text-emerald-700" /> },
+            ]}
+            status={kolamStatus}
+          />
+          <CategoryCard
+            title="Hidroponik"
+            icon={Sprout}
+            items={[
+              { label: "Suhu", value: data.hidroponik.suhu, unit: "°C", icon: <Thermometer className="w-4 h-4 text-emerald-700" /> },
+              { label: "pH", value: data.hidroponik.ph, unit: "", icon: <Gauge className="w-4 h-4 text-emerald-700" /> },
+            ]}
+            status={hidroStatus}
+          />
+          <CategoryCard
+            title="Kandang"
+            icon={Home}
+            items={[
+              { label: "Suhu", value: data.kandang.suhu, unit: "°C", icon: <Thermometer className="w-4 h-4 text-emerald-700" /> },
+              { label: "Kelembaban", value: data.kandang.kelembaban, unit: "%", icon: <Droplet className="w-4 h-4 text-emerald-700" /> },
+              { label: "Amonia", value: data.kandang.amonia, unit: "ppm", icon: <AlertTriangle className="w-4 h-4 text-emerald-700" /> },
+            ]}
+            status={kandangStatus}
+          />
+          <CategoryCard
+            title="Cacing Sutra"
+            icon={Bug}
+            items={[
+              { label: "Suhu", value: data.ulat.suhu, unit: "°C", icon: <Thermometer className="w-4 h-4 text-emerald-700" /> },
+              { label: "Kelembaban", value: data.ulat.kelembaban, unit: "%", icon: <Droplet className="w-4 h-4 text-emerald-700" /> },
+              { label: "Intensitas Cahaya", value: data.ulat.intensitas_cahaya, unit: "lux", icon: <Sun className="w-4 h-4 text-emerald-700" /> },
+            ]}
+            status={ulatStatus}
+          />
+        </div>
+
+        {/* Cuaca + WeatherCard */}
+        <div className="flex flex-col gap-4">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl border bg-white/80 shadow-sm p-4"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <CloudSun className="w-5 h-5 text-sky-600" />
+                <h3 className="font-semibold">Kondisi Cuaca</h3>
+              </div>
+              <a
+                className="text-xs text-sky-700 inline-flex items-center gap-1"
+                href="https://developer.accuweather.com/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                AccuWeather <ArrowUpRight className="w-3 h-3" />
+              </a>
+            </div>
+            {/* Komponen lama tetap (agar kompatibel dengan projectmu) */}
+            <WeatherCard city="Lhokseumawe" apiKey={ACCU_API_KEY} />
+          </motion.div>
+
+          {/* Detail lengkap (baru) */}
+          {!wxLoading && (wxNow || wxDaily) ? (
+            <WeatherDetail />
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="rounded-2xl border bg-white/70 p-4 text-sm text-gray-600"
+            >
+              Memuat detail cuaca…
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      {/* Alerts */}
+      <div className="px-6 pb-8">
+        <PeringatanTerbaru alertsList={alerts} />
+      </div>
+    </div>
+  );
+}
+
+function capitalize(s) {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
