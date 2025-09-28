@@ -70,9 +70,9 @@ export const thresholds = {
       units: "pH"
     },
     oksigen: {
-      ok: [5, Infinity],      // ideal ≥5 mg/L
+      ok: [5, 9],      // ideal ≥5 mg/L
       warnLow: 3,             // 3–<5 mg/L = warning
-      warnHigh: null,
+      warnHigh: 9,
       units: "mg/L",
       note: "Jaga aerasi; DO <3 mg/L berbahaya terutama jelang subuh."
     },

@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ref, onValue, set } from "firebase/database";
 import { db } from "../firebase";
 import Header from "../components/Header";
-import WeatherCard from "../components/WeatherCard";
 import { classify } from "../utils/Threshold";
 import { motion } from "framer-motion";
 import {
@@ -47,16 +46,16 @@ const toCompass = (deg) => {
 
 export default function Dashboard() {
   const [data, setData] = useState({
-    hidroponik: { suhu: "-", ph: "-" },
-    kandang: { suhu: "-", kelembaban: "-", amonia: "-" },
-    kolam: { suhu: "-", ph: "-", oksigen: "-" },
-    ulat: { suhu: "-", kelembaban: "-", intensitas_cahaya: "-" },
+    hidroponik: { suhu: "-", ph: "-", kelembaban: "-", intensitas_cahaya: "-", aliran_nutrisi: "-" },
+    kandang: { suhu: "-", kelembaban: "-", amonia: "-", kualitas_udara: "-", pencahayaan: "-" },
+    kolam: { suhu: "-", ph: "-", oksigen: "-", amonia: "-" },
+    ulat: { suhu: "-", ph: "-", oksigen: "-", amonia: "-", kelembaban: "-", intensitas_cahaya: "-" },
   });
 
   const [lastUpdate, setLastUpdate] = useState(Date.now());
   const [alerts, setAlerts] = useState([]);
 
-  // =============== CUACA (AccuWeather — kondisi lengkap) ===============
+  // =============== CUACA (AccuWeather – kondisi lengkap) ===============
   const [wxNow, setWxNow] = useState(null);
   const [wxDaily, setWxDaily] = useState(null);
   const [wxLoading, setWxLoading] = useState(true);
@@ -151,7 +150,7 @@ export default function Dashboard() {
       ok: { label: "Optimal", color: "bg-green-500", bg: "bg-green-50", severity: "info" },
       warning: { label: "Waspada", color: "bg-yellow-500", bg: "bg-yellow-50", severity: "warning" },
       danger: { label: "Bahaya", color: "bg-red-500", bg: "bg-red-50", severity: "danger" },
-      unknown: { label: "—", color: "bg-gray-400", bg: "bg-white", severity: "info" },
+      unknown: { label: "–", color: "bg-gray-400", bg: "bg-white", severity: "info" },
     };
     return map[res.level] || map.unknown;
   };
@@ -188,26 +187,35 @@ export default function Dashboard() {
       }
     };
 
-    // kolam
+    // kolam - menyamakan dengan monitoring.jsx
     checkParam("kolam", "suhu", val.kolam?.suhu);
     checkParam("kolam", "ph", val.kolam?.ph);
     checkParam("kolam", "oksigen", val.kolam?.oksigen);
+    checkParam("kolam", "amonia_total", val.kolam?.amonia, {
+      ph: val.kolam?.ph,
+      suhu: val.kolam?.suhu,
+    });
 
-    // hidroponik
-    checkParam("hidroponik", "suhu", val.hidroponik?.suhu);
-    checkParam("hidroponik", "ph", val.hidroponik?.ph);
+    // ulat (cacing sutra) - menyamakan dengan monitoring.jsx
+    checkParam("ulat", "suhu", val.ulat?.suhu);
+    checkParam("ulat", "ph", val.ulat?.ph);
+    checkParam("ulat", "oksigen", val.ulat?.oksigen);
+    checkParam("ulat", "amonia_total", val.ulat?.amonia);
 
-    // kandang (heat stress pertimbangkan kelembaban)
+    // kandang - menyamakan dengan monitoring.jsx
     checkParam("kandang", "suhu", val.kandang?.suhu, {
       kelembaban: toNum(val.kandang?.kelembaban),
     });
     checkParam("kandang", "kelembaban", val.kandang?.kelembaban);
-    checkParam("kandang", "amonia", val.kandang?.amonia);
+    checkParam("kandang", "amonia", val.kandang?.kualitas_udara);
+    checkParam("kandang", "intensitas_cahaya", val.kandang?.pencahayaan);
 
-    // ulat
-    checkParam("ulat", "suhu", val.ulat?.suhu);
-    checkParam("ulat", "kelembaban", val.ulat?.kelembaban);
-    checkParam("ulat", "intensitas_cahaya", val.ulat?.intensitas_cahaya);
+    // hidroponik - menyamakan dengan monitoring.jsx
+    checkParam("hidroponik", "ph", val.hidroponik?.ph);
+    checkParam("hidroponik", "suhu", val.hidroponik?.suhu);
+    checkParam("hidroponik", "kelembaban", val.hidroponik?.kelembaban);
+    checkParam("hidroponik", "intensitas_cahaya", val.hidroponik?.intensitas_cahaya);
+    checkParam("hidroponik", "ec", val.hidroponik?.aliran_nutrisi);
 
     // sensor stale
     if (Date.now() - nowTime > 60000) {
@@ -238,50 +246,58 @@ export default function Dashboard() {
     return "info";
   };
 
+  // ===================== MODIFIKASI SYSTEM STATUS =====================
   const getSystemStatusBoxes = (alertsList) => {
-    const sections = ["kolam", "hidroponik", "kandang", "ulat"];
-    const map = {};
-    sections.forEach((s) => (map[s] = "info"));
+    const sections = [
+      { id: "kolam", label: "Kolam Ikan", data: data.kolam },
+      { id: "hidroponik", label: "Hidroponik", data: data.hidroponik },
+      { id: "kandang", label: "Kandang", data: data.kandang },
+      { id: "ulat", label: "Cacing Sutra", data: data.ulat }
+    ];
 
-    let globalSeverity = "info";
-    (alertsList || []).forEach((a) => {
-      const id = a.id || "";
-      const sev = a.severity;
-      if (id === "data-stale" || id === "no-data") {
-        if (sev === "danger") globalSeverity = "danger";
-        else if (sev === "warning" && globalSeverity !== "danger") globalSeverity = "warning";
+    const inactiveSections = [];
+    
+    // Periksa setiap sistem apakah aktif atau tidak
+    sections.forEach((section) => {
+      const sectionData = section.data;
+      let isActive = false;
+      
+      if (sectionData) {
+        // Periksa apakah ada data yang tidak "-", null, undefined
+        const values = Object.values(sectionData);
+        isActive = values.some(value => 
+          value !== "-" && 
+          value !== null && 
+          value !== undefined && 
+          value !== ""
+        );
       }
-      sections.forEach((s) => {
-        if (id.startsWith(s)) {
-          if (sev === "danger") map[s] = "danger";
-          else if (sev === "warning" && map[s] !== "danger") map[s] = "warning";
-        }
-      });
+      
+      // Juga periksa dari alerts apakah ada yang missing
+      const hasMissingAlert = (alertsList || []).some(alert => 
+        alert.id === `${section.id}-missing`
+      );
+      
+      if (!isActive || hasMissingAlert) {
+        inactiveSections.push({
+          id: section.id,
+          label: section.label,
+          severity: "danger"
+        });
+      }
     });
 
-    const severityOrder = { danger: 0, warning: 1, info: 2 };
-    const boxes = [];
-    Object.keys(map)
-      .map((s) => ({ section: s, severity: map[s] }))
-      .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
-      .forEach((p) => {
-        if (p.severity !== "info")
-          boxes.push({ id: p.section, label: capitalize(p.section), severity: p.severity });
-      });
-
-    if (boxes.length === 0 && globalSeverity === "info") {
-      return [{ id: "all-ok", label: "Semua sistem online", severity: "info" }];
+    // Jika ada sistem yang tidak aktif, tampilkan yang tidak aktif
+    if (inactiveSections.length > 0) {
+      return inactiveSections.slice(0, 4); // Maksimal 4 sistem
     }
 
-    if (globalSeverity !== "info") {
-      boxes.unshift({
-        id: "global",
-        label: globalSeverity === "danger" ? "Masalah jaringan / data" : "Peringatan sistem",
-        severity: globalSeverity,
-      });
-    }
-
-    return boxes.slice(0, 4);
+    // Jika semua sistem aktif
+    return [{ 
+      id: "all-ok", 
+      label: "Semua sistem online", 
+      severity: "info" 
+    }];
   };
 
   // ========================= UI COMPONENTS ============================
@@ -457,7 +473,7 @@ export default function Dashboard() {
             <Clock className="w-4 h-4" />
             {now?.LocalObservationDateTime
               ? new Date(now.LocalObservationDateTime).toLocaleString()
-              : "—"}
+              : "–"}
           </div>
         </div>
 
@@ -517,7 +533,7 @@ export default function Dashboard() {
             <div>
               <h1 className="text-2xl font-bold">Dashboard Smart Farming</h1>
               <div className="text-sm text-gray-600">
-                Pemantauan real-time — <span className="inline-flex items-center gap-1">
+                Pemantauan real-time – <span className="inline-flex items-center gap-1">
                   <Clock className="w-4 h-4" /> diperbarui {timeAgo}
                 </span>
               </div>
@@ -551,11 +567,6 @@ export default function Dashboard() {
       {/* GRID */}
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-5 p-6">
         {/* Kartu Domain */}
-        {/* PENYESUAIAN:
-          Kelas grid di bawah diubah dari `lg:grid-cols-4` menjadi `xl:grid-cols-4`.
-          Ini memperbaiki masalah di mana 4 kartu dipaksa masuk ke satu kolom pada layar tablet (ukuran lg),
-          sehingga membuat tampilan lebih konsisten di semua perangkat.
-        */}
         <div className="xl:col-span-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <CategoryCard
             title="Kolam Ikan"
@@ -598,32 +609,9 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Cuaca + WeatherCard */}
+        {/* Kondisi Cuaca Lengkap */}
         <div className="flex flex-col gap-4">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl border bg-white/80 shadow-sm p-4"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <CloudSun className="w-5 h-5 text-sky-600" />
-                <h3 className="font-semibold">Kondisi Cuaca</h3>
-              </div>
-              <a
-                className="text-xs text-sky-700 inline-flex items-center gap-1"
-                href="https://developer.accuweather.com/"
-                target="_blank"
-                rel="noreferrer"
-              >
-                AccuWeather <ArrowUpRight className="w-3 h-3" />
-              </a>
-            </div>
-            {/* Komponen lama tetap (agar kompatibel dengan projectmu) */}
-            <WeatherCard city="Lhokseumawe" apiKey={ACCU_API_KEY} />
-          </motion.div>
-
-          {/* Detail lengkap (baru) */}
+          {/* Detail lengkap */}
           {!wxLoading && (wxNow || wxDaily) ? (
             <WeatherDetail />
           ) : (
