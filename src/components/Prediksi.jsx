@@ -1,198 +1,208 @@
+// src/components/Prediksi.jsx
 import * as tf from "@tensorflow/tfjs";
-import { ref, onValue } from "firebase/database";
+import { get, ref } from "firebase/database";
 import { db } from "../firebase";
-import { classify, thresholds } from "../utils/Threshold";
 
 // --- KONFIGURASI ---
-const ACCUWEATHER_API_KEY = "zoka_dd02f3fe7458d4c34ba195d242ea840d4_1a3c2bfa";
-const LOCATION_KEY = "205120"; // Lhokseumawe
-const WINDOW = 7, MIN_TRAIN = 14, MAX_EPOCHS = 80, BATCH = 8, LR = 0.01;
-const DEFAULT_CYCLES = { kolam: 120, cacing_sutra: 14, kandang: 35, hidroponik: 30 };
+const MODEL_STORAGE_PATH = "indexeddb://sensor-prediction-model";
+const METADATA_STORAGE_KEY = "sensor-prediction-metadata";
+const SEQUENCE_LENGTH = 7; // Menggunakan data 7 hari terakhir untuk memprediksi hari ke-8
+const EPOCHS = 50; // Jumlah iterasi training
 
-// --- UTILITAS ---
-const toNum = (v) => v === undefined || v === null || v === "-" || v === "" || Number.isNaN(Number(v)) ? NaN : Number(v);
-const safe = (x, d = NaN) => (Number.isFinite(x) ? x : d);
+// Daftar fitur yang akan diprediksi (harus urut dan konsisten)
+const FEATURE_KEYS = [
+  "kolam.suhu", "kolam.ph", "kolam.oksigen", "kolam.amonia",
+  "ulat.suhu", "ulat.ph", "ulat.oksigen", "ulat.amonia",
+  "kandang.suhu", "kandang.kelembaban", "kandang.kualitas_udara", "kandang.pencahayaan",
+  "hidroponik.ph", "hidroponik.suhu", "hidroponik.kelembaban", "hidroponik.intensitas_cahaya", "hidroponik.aliran_nutrisi",
+  "usage.energy", "usage.water", "usage.efficiency"
+];
 
-// --- PENGAMBILAN DATA ---
-export async function getHistory() {
-  return new Promise((resolve) => {
-    onValue(ref(db, "history"), (snap) => {
-      const raw = snap.val() || {};
-      const days = Object.keys(raw).sort().slice(-60);
-      resolve(days.map((d) => ({ date: d, ...raw[d] })));
-    }, { onlyOnce: true });
-  });
-}
+// --- FUNGSI HELPER ---
 
 /**
- * FINAL: Mengambil dan memproses data prakiraan cuaca dari AccuWeather.
+ * Mengambil data mentah dari Firebase 'history'
  */
-export async function getTomorrowWeather() {
-  const fallback = { suhuAvg: NaN, suhuMin: NaN, suhuMax: NaN, kelembaban: NaN, cloud: NaN, wind: NaN, phrase: "Gagal memuat", hasPrecipitation: false };
-  try {
-    const res = await fetch(`https://dataservice.accuweather.com/forecasts/v1/daily/1day/${LOCATION_KEY}?apikey=${ACCUWEATHER_API_KEY}&language=id&details=true&metric=true`);
-    if (!res.ok) {
-      console.error("AccuWeather API GAGAL:", res.status, await res.text());
-      return fallback;
-    }
-    const data = await res.json();
-    console.log("✅ Data Cuaca Esok Diterima:", data);
+const fetchHistoryData = async () => {
+  const historyRef = ref(db, "history");
+  const snapshot = await get(historyRef);
+  const val = snapshot.val() || {};
 
-    if (data?.DailyForecasts?.[0]) {
-      const d = data.DailyForecasts[0];
-      const temp = d.Temperature;
-      const dayInfo = d.Day || {};
-      return {
-        suhuAvg: (temp?.Minimum?.Value + temp?.Maximum?.Value) / 2,
-        suhuMin: temp?.Minimum?.Value,
-        suhuMax: temp?.Maximum?.Value,
-        kelembaban: dayInfo.RelativeHumidity?.Average,
-        cloud: dayInfo.CloudCover,
-        wind: dayInfo.Wind?.Speed?.Value,
-        phrase: dayInfo.IconPhrase,
-        hasPrecipitation: dayInfo.HasPrecipitation,
-      };
-    }
-    return fallback;
-  } catch (e) {
-    console.error("Error di getTomorrowWeather:", e);
-    return fallback;
-  }
-}
-
-// =========================== MODEL TF.JS ==================================
-function modelName(domain, metric) {
-  return `idxdb://prediksi-${domain}-${metric}`.replace(/\./g, "_");
-}
-
-function buildModel(inputSize) {
-  const model = tf.sequential();
-  model.add(tf.layers.reshape({ targetShape: [WINDOW, inputSize], inputShape: [WINDOW * inputSize] }));
-  model.add(tf.layers.lstm({ units: 16, returnSequences: false }));
-  model.add(tf.layers.dense({ units: 8, activation: "relu" }));
-  model.add(tf.layers.dense({ units: 1 }));
-  model.compile({ optimizer: tf.train.adam(LR), loss: "meanSquaredError" });
-  return model;
-}
-
-function makeXY(series, exoSeries, window = WINDOW) {
-  const X = [], y = [];
-  const inSize = 1 + (exoSeries?.[0]?.length || 0);
-  for (let i = 0; i + window < series.length; i++) {
-    const base = series.slice(i, i + window).map((v) => [safe(v, 0)]);
-    const exoSlice = (exoSeries || []).slice(i, i + window);
-    const merged = base.map((row, idx) => row.concat(exoSlice[idx] || []));
-    X.push(merged.flat());
-    y.push(series[i + window]);
-  }
-  return { X: tf.tensor2d(X), y: tf.tensor2d(y, [y.length, 1]), inputSize: inSize };
-}
-
-function defaultNormalize(arr) {
-  const valid = arr.filter((v) => Number.isFinite(v));
-  if (valid.length === 0) { // Menangani kasus jika tidak ada data valid
-      const emptyNorm = arr.map(() => NaN);
-      emptyNorm.min = 0; emptyNorm.max = 1;
-      return emptyNorm;
-  }
-  const min = Math.min(...valid);
-  const max = Math.max(...valid);
-  const scale = max - min || 1;
-  const norm = arr.map((v) => (Number.isFinite(v) ? (v - min) / scale : NaN));
-  norm.min = min; norm.max = max;
-  return norm;
-}
-
-function denorm(x, cfg) { return cfg.min + x * (cfg.max - cfg.min || 1); }
-
-async function trainOrLoad(domain, metric, series, exoSeries) {
-  const name = modelName(domain, metric);
-  let model;
-  try { model = await tf.loadLayersModel(name); } catch (_) {}
-  if (!model) {
-    const norm = defaultNormalize(series);
-    const exoNorm = (exoSeries || []).map((row) => row.map((v, j) => {
-      const ranges = [40, 100, 100, 20];
-      return Number.isFinite(v) ? Math.max(0, Math.min(1, v / (ranges[j] || 1))) : 0;
-    }));
-
-    const { X, y, inputSize } = makeXY(norm, exoNorm);
-    if (X.shape[0] < 4) return null;
-
-    model = buildModel(inputSize);
-    try {
-      await model.fit(X, y, { epochs: Math.min(MAX_EPOCHS, 20 + X.shape[0] * 2), batchSize: BATCH, verbose: 0 });
-      await model.save(name);
-    } finally {
-      X.dispose(); y.dispose();
-    }
-    model.__normCfg = norm;
-  }
-  return model;
-}
-
-export async function predictNext(domain, metric, series, exoSeries, tomorrowExo) {
-  const last = series[series.length - 1];
-  if (series.length < MIN_TRAIN) return { value: last, source: "naive" };
-
-  const model = await trainOrLoad(domain, metric, series, exoSeries);
-  if (!model) return { value: last, source: "naive" };
-
-  const norm = model.__normCfg || defaultNormalize(series);
-  const sNorm = defaultNormalize(series).map((x) => (x - norm.min) / ((norm.max - norm.min) || 1));
-  const exoNorm = (exoSeries || []).map((row) => [
-    Number.isFinite(row?.[0]) ? Math.max(0, Math.min(1, row[0] / 40)) : 0,
-    Number.isFinite(row?.[1]) ? Math.max(0, Math.min(1, row[1] / 100)) : 0,
-    Number.isFinite(row?.[2]) ? Math.max(0, Math.min(1, row[2] / 100)) : 0,
-    Number.isFinite(row?.[3]) ? Math.max(0, Math.min(1, row[3] / 20)) : 0,
-  ]);
-
-  const window = sNorm.slice(-WINDOW);
-  const exoWin = exoNorm.slice(-WINDOW);
-  const exoTomorrow = [
-    Number.isFinite(tomorrowExo?.suhu) ? Math.max(0, Math.min(1, tomorrowExo.suhu / 40)) : 0,
-    Number.isFinite(tomorrowExo?.kelembaban) ? Math.max(0, Math.min(1, tomorrowExo.kelembaban / 100)) : 0,
-    Number.isFinite(tomorrowExo?.cloud) ? Math.max(0, Math.min(1, tomorrowExo.cloud / 100)) : 0,
-    Number.isFinite(tomorrowExo?.wind) ? Math.max(0, Math.min(1, tomorrowExo.wind / 20)) : 0,
-  ];
-  const exoInput = exoWin.slice(0, WINDOW - 1).concat([exoTomorrow]);
-
-  const input = tf.tensor2d([window.map((v) => [v]).map((row, i) => row.concat(exoInput[i])).flat()]);
-  const pred = model.predict(input);
-  const val = (await pred.data())[0];
-  pred.dispose(); input.dispose();
-
-  const y = denorm(val, norm);
-  if (!Number.isFinite(y)) return { value: last, source: "naive" };
-  return { value: y, source: "tfjs" };
-}
-
-// =========================== ESTIMASI PANEN ===============================
-function progressIndex(domain, lastNDays) {
-  const defs = thresholds[domain];
-  if (!defs) return 0.5;
-  const items = Object.keys(defs);
-  let score = 0, count = 0;
-  lastNDays.forEach((day) => {
-    items.forEach((metric) => {
-      const v = toNum(day?.[domain]?.[metric === "ec" ? "aliran_nutrisi" : metric]);
-      if (!Number.isFinite(v)) return;
-      const cls = classify(domain, metric, v, {
-        ph: toNum(day?.kolam?.ph),
-        suhu: toNum(day?.kolam?.suhu),
-        kelembaban: toNum(day?.kandang?.kelembaban),
+  // Ubah objek menjadi array dan urutkan berdasarkan tanggal
+  return Object.keys(val)
+    .sort()
+    .map((date) => {
+      const dayData = val[date];
+      // Memipihkan struktur data dan memastikan semua keys ada
+      return FEATURE_KEYS.map(key => {
+        const [domain, metric] = key.split('.');
+        if (domain === 'usage') {
+          return dayData[domain]?.[metric]?.value ?? 0;
+        }
+        return dayData[domain]?.[metric] ?? 0;
       });
-      score += cls.level === "ok" ? 1 : cls.level === "warning" ? 0.6 : 0.2;
-      count++;
     });
-  });
-  return count ? score / count : 0.5;
-}
+};
 
-export function estimateHarvestDays(domain, lastNDays) {
-  const base = DEFAULT_CYCLES[domain] || 30;
-  const p = progressIndex(domain, lastNDays);
-  const adj = base / p * 0.8;
-  const clamp = Math.max(0.6 * base, Math.min(1.6 * base, adj));
-  return Math.round(clamp);
-}
+/**
+ * Normalisasi data ke rentang 0-1 dan membuat sekuens
+ * @returns {object} data yang sudah diproses dan metadata (min, max) untuk denormalisasi
+ */
+const preprocessData = (dataArray) => {
+  if (dataArray.length < SEQUENCE_LENGTH + 1) {
+    throw new Error("Data historis tidak cukup untuk training.");
+  }
+
+  const tensorData = tf.tensor2d(dataArray);
+  const dataMin = tensorData.min(0);
+  const dataMax = tensorData.max(0);
+  const normalizedData = tensorData.sub(dataMin).div(dataMax.sub(dataMin));
+
+  const sequences = [];
+  const labels = [];
+  const data = normalizedData.arraySync();
+
+  for (let i = 0; i < data.length - SEQUENCE_LENGTH; i++) {
+    sequences.push(data.slice(i, i + SEQUENCE_LENGTH));
+    labels.push(data[i + SEQUENCE_LENGTH]);
+  }
+
+  return {
+    sequences: tf.tensor3d(sequences),
+    labels: tf.tensor2d(labels),
+    metadata: {
+      min: dataMin.arraySync(),
+      max: dataMax.arraySync()
+    }
+  };
+};
+
+/**
+ * Membuat model neural network (LSTM)
+ */
+const createModel = (numFeatures) => {
+  const model = tf.sequential();
+  model.add(tf.layers.lstm({
+    units: 50,
+    returnSequences: true,
+    inputShape: [SEQUENCE_LENGTH, numFeatures]
+  }));
+  model.add(tf.layers.lstm({ units: 50, returnSequences: false }));
+  model.add(tf.layers.dense({ units: numFeatures }));
+
+  model.compile({
+    optimizer: tf.train.adam(),
+    loss: "meanSquaredError"
+  });
+
+  return model;
+};
+
+/**
+ * Fungsi utama untuk melatih model baru dan menyimpannya
+ */
+const trainAndCacheModel = async (onProgress) => {
+  onProgress("Mengambil data historis dari server...");
+  const rawData = await fetchHistoryData();
+
+  onProgress("Memproses data untuk training...");
+  const { sequences, labels, metadata } = preprocessData(rawData);
+  localStorage.setItem(METADATA_STORAGE_KEY, JSON.stringify(metadata));
+
+  onProgress("Membuat arsitektur model...");
+  const model = createModel(FEATURE_KEYS.length);
+
+  onProgress(`Memulai training model (${EPOCHS} epochs)...`);
+  await model.fit(sequences, labels, {
+    epochs: EPOCHS,
+    callbacks: {
+      onEpochEnd: (epoch) => {
+        onProgress(`Training... Epoch ${epoch + 1} / ${EPOCHS}`);
+      }
+    }
+  });
+
+  onProgress("Menyimpan model ke cache browser...");
+  await model.save(MODEL_STORAGE_PATH);
+  onProgress("Model berhasil dilatih dan disimpan.");
+  return { model, metadata };
+};
+
+/**
+ * Fungsi prediksi utama
+ * @param {tf.LayersModel} model
+ * @param {object} metadata
+ * @returns {object} Hasil prediksi yang sudah di-denormalisasi dan terstruktur
+ */
+const predictNextDay = async (model, metadata) => {
+  const rawData = await fetchHistoryData();
+  if (rawData.length < SEQUENCE_LENGTH) {
+    throw new Error("Data tidak cukup untuk membuat prediksi.");
+  }
+  
+  const lastSequenceRaw = rawData.slice(-SEQUENCE_LENGTH);
+
+  // Normalisasi input sequence menggunakan metadata yang tersimpan
+  const minTensor = tf.tensor1d(metadata.min);
+  const maxTensor = tf.tensor1d(metadata.max);
+  const inputTensor = tf.tensor2d(lastSequenceRaw);
+  const normalizedInput = inputTensor.sub(minTensor).div(maxTensor.sub(minTensor));
+  
+  // Lakukan prediksi
+  const prediction = model.predict(normalizedInput.expandDims(0));
+  
+  // Denormalisasi hasil prediksi
+  const denormalizedPrediction = prediction.mul(maxTensor.sub(minTensor)).add(minTensor);
+  const predictionArray = denormalizedPrediction.dataSync();
+
+  // Ubah hasil array menjadi objek yang mudah dibaca
+  const result = {};
+  FEATURE_KEYS.forEach((key, index) => {
+    const [domain, metric] = key.split('.');
+    if (!result[domain]) result[domain] = {};
+    result[domain][metric] = predictionArray[index];
+  });
+  return result;
+};
+
+
+// --- FUNGSI EKSPOR UTAMA ---
+
+/**
+ * Mengelola seluruh alur kerja: memuat model dari cache atau melatih model baru, lalu membuat prediksi.
+ * @param {function} setStatus - Callback untuk melaporkan status proses (misal: "Loading model...", "Training...")
+ * @returns {object|null} Objek berisi prediksi atau null jika gagal.
+ */
+export const getPredictions = async (setStatus) => {
+  let model;
+  let metadata;
+
+  try {
+    setStatus("Mencari model di cache browser...");
+    model = await tf.loadLayersModel(MODEL_STORAGE_PATH);
+    metadata = JSON.parse(localStorage.getItem(METADATA_STORAGE_KEY));
+    setStatus("Model ditemukan dan berhasil dimuat.");
+  } catch (error) {
+    console.warn("Model tidak ditemukan di cache. Memulai proses training baru.");
+    try {
+      const trainingResult = await trainAndCacheModel(setStatus);
+      model = trainingResult.model;
+      metadata = trainingResult.metadata;
+    } catch (trainError) {
+      console.error("Gagal melatih model:", trainError);
+      setStatus(`Error: ${trainError.message}`);
+      return null;
+    }
+  }
+
+  try {
+    setStatus("Membuat prediksi untuk esok hari...");
+    const predictions = await predictNextDay(model, metadata);
+    setStatus("Prediksi berhasil dibuat.");
+    return predictions;
+  } catch (predictError) {
+    console.error("Gagal membuat prediksi:", predictError);
+    setStatus(`Error: ${predictError.message}`);
+    return null;
+  }
+};

@@ -584,6 +584,7 @@ export default function Dashboard() {
             items={[
               { label: "Suhu", value: data.hidroponik.suhu, unit: "°C", icon: <Thermometer className="w-4 h-4 text-emerald-700" /> },
               { label: "pH", value: data.hidroponik.ph, unit: "", icon: <Gauge className="w-4 h-4 text-emerald-700" /> },
+              { label: "intensitas Cahaya", value: data.hidroponik.intensitas_cahaya, unit: "", icon: <Gauge className="w-4 h-4 text-emerald-700" /> }
             ]}
             status={hidroStatus}
           />
@@ -593,7 +594,7 @@ export default function Dashboard() {
             items={[
               { label: "Suhu", value: data.kandang.suhu, unit: "°C", icon: <Thermometer className="w-4 h-4 text-emerald-700" /> },
               { label: "Kelembaban", value: data.kandang.kelembaban, unit: "%", icon: <Droplet className="w-4 h-4 text-emerald-700" /> },
-              { label: "Amonia", value: data.kandang.amonia, unit: "ppm", icon: <AlertTriangle className="w-4 h-4 text-emerald-700" /> },
+              { label: "Amonia", value: data.kandang.kualitas_udara, unit: "ppm", icon: <AlertTriangle className="w-4 h-4 text-emerald-700" /> },
             ]}
             status={kandangStatus}
           />
