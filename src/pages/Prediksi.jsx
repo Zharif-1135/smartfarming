@@ -134,7 +134,7 @@ const PredictionGauge = ({ label, value, units, level, range }) => {
   const colors = { ok: "#16a34a", warning: "#f59e0b", danger: "#dc2626", unknown: "#6b7280" };
   const color = colors[level] || colors.unknown;
 
-  // --- PERBAIKAN ---
+  // --- PERBAIKAN ---n
   // Pastikan semua nilai numerik sebelum digunakan untuk kalkulasi animasi
   const isValueValid = typeof value === 'number' && !isNaN(value);
   const [min, max] = Array.isArray(range) ? range : [0, isValueValid ? value * 2 : 100];
