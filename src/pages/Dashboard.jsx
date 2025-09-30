@@ -157,6 +157,16 @@ export default function Dashboard() {
 
   function generateAlerts(val, nowTime) {
     const list = [];
+    
+    // --- PERUBAHAN DI SINI ---
+    // Membuat pemetaan dari nama domain internal ke nama yang ditampilkan di UI
+    const domainDisplayNames = {
+      kolam: "Kolam Ikan",
+      hidroponik: "Hidroponik",
+      kandang: "Kandang",
+      ulat: "Cacing Sutra", // Ini adalah perubahan utamanya
+    };
+
     const pushAlert = (id, severity, title, detail) => {
       list.push({ id, severity, title, detail });
     };
@@ -164,10 +174,12 @@ export default function Dashboard() {
     const sections = ["kolam", "hidroponik", "kandang", "ulat"];
     sections.forEach((s) => {
       if (!val[s]) {
+        // Menggunakan nama dari `domainDisplayNames`
+        const displayName = domainDisplayNames[s] || capitalize(s);
         pushAlert(
           `${s}-missing`,
           "danger",
-          `${capitalize(s)}: data tidak tersedia`,
+          `${displayName}: data tidak tersedia`,
           `Path sensor "${s}" tidak ditemukan atau offline.`
         );
       }
@@ -178,10 +190,12 @@ export default function Dashboard() {
       if (Number.isNaN(num)) return;
       const res = classify(domain, metric, num, extras);
       if (res.level !== "ok") {
+        // Menggunakan nama dari `domainDisplayNames`
+        const displayName = domainDisplayNames[domain] || capitalize(domain);
         pushAlert(
           `${domain}-${metric}`,
           res.level,
-          `${capitalize(domain)}: ${metric.replace(/_/g, " ")} tidak optimal`,
+          `${displayName}: ${metric.replace(/_/g, " ")} tidak optimal`,
           res.message
         );
       }
@@ -240,6 +254,7 @@ export default function Dashboard() {
   }
 
   const overallSeverity = (alertsArr) => {
+    // ... (Fungsi ini tidak perlu diubah)
     if (!alertsArr || alertsArr.length === 0) return "info";
     if (alertsArr.some((a) => a.severity === "danger")) return "danger";
     if (alertsArr.some((a) => a.severity === "warning")) return "warning";
@@ -248,6 +263,7 @@ export default function Dashboard() {
 
   // ===================== MODIFIKASI SYSTEM STATUS =====================
   const getSystemStatusBoxes = (alertsList) => {
+    // ... (Fungsi ini tidak perlu diubah)
     const sections = [
       { id: "kolam", label: "Kolam Ikan", data: data.kolam },
       { id: "hidroponik", label: "Hidroponik", data: data.hidroponik },
@@ -257,13 +273,11 @@ export default function Dashboard() {
 
     const inactiveSections = [];
     
-    // Periksa setiap sistem apakah aktif atau tidak
     sections.forEach((section) => {
       const sectionData = section.data;
       let isActive = false;
       
       if (sectionData) {
-        // Periksa apakah ada data yang tidak "-", null, undefined
         const values = Object.values(sectionData);
         isActive = values.some(value => 
           value !== "-" && 
@@ -273,7 +287,6 @@ export default function Dashboard() {
         );
       }
       
-      // Juga periksa dari alerts apakah ada yang missing
       const hasMissingAlert = (alertsList || []).some(alert => 
         alert.id === `${section.id}-missing`
       );
@@ -287,12 +300,10 @@ export default function Dashboard() {
       }
     });
 
-    // Jika ada sistem yang tidak aktif, tampilkan yang tidak aktif
     if (inactiveSections.length > 0) {
-      return inactiveSections.slice(0, 4); // Maksimal 4 sistem
+      return inactiveSections.slice(0, 4);
     }
 
-    // Jika semua sistem aktif
     return [{ 
       id: "all-ok", 
       label: "Semua sistem online", 
@@ -302,6 +313,7 @@ export default function Dashboard() {
 
   // ========================= UI COMPONENTS ============================
   const Badge = ({ severity, children }) => {
+    // ... (Komponen ini tidak perlu diubah)
     const map = {
       danger: "bg-red-500 text-white",
       warning: "bg-yellow-500 text-white",
@@ -315,6 +327,7 @@ export default function Dashboard() {
   };
 
   const CategoryCard = ({ title, items, status, icon: Icon }) => (
+    // ... (Komponen ini tidak perlu diubah)
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
@@ -352,6 +365,7 @@ export default function Dashboard() {
   );
 
   const PeringatanTerbaru = ({ alertsList }) => {
+    // ... (Komponen ini tidak perlu diubah)
     const sev = overallSeverity(alertsList);
     const styleMap = {
       danger: "bg-red-50 border-red-400 text-red-800",
@@ -416,15 +430,14 @@ export default function Dashboard() {
   };
 
   // ========================= STATUS DOMAIN ============================
+  // ... (Bagian ini tidak perlu diubah)
   const kolamStatus = getStatus("kolam", "suhu", data.kolam.suhu);
   const hidroStatus = getStatus("hidroponik", "suhu", data.hidroponik.suhu);
   const kandangStatus = getStatus("kandang", "suhu", data.kandang.suhu, {
     kelembaban: toNum(data.kandang.kelembaban),
   });
   const ulatStatus = getStatus("ulat", "suhu", data.ulat.suhu);
-
   const systemBoxes = getSystemStatusBoxes(alerts);
-
   const timeAgo = useMemo(() => {
     const diff = Date.now() - lastUpdate;
     if (diff < 1500) return "baru saja";
@@ -438,9 +451,9 @@ export default function Dashboard() {
 
   // ========================= WEATHER VIEW (detailed) ==================
   const WeatherDetail = () => {
+    // ... (Komponen ini tidak perlu diubah)
     const now = wxNow;
     const d1 = wxDaily;
-
     const uv = now?.UVIndex;
     const uvCat = now?.UVIndexText || "-";
     const windSp = now?.Wind?.Speed?.Metric?.Value;
@@ -454,7 +467,6 @@ export default function Dashboard() {
     const cloudCover = now?.CloudCover;
     const pressure = now?.Pressure?.Metric?.Value;
     const ceiling = now?.Ceiling?.Metric?.Value;
-
     const rainProb = d1?.Day?.PrecipitationProbability ?? d1?.Night?.PrecipitationProbability;
     const tStormProb = d1?.Day?.ThunderstormProbability ?? d1?.Night?.ThunderstormProbability;
 
@@ -507,6 +519,7 @@ export default function Dashboard() {
   };
 
   const MetricRow = ({ icon, label, value }) => (
+    // ... (Komponen ini tidak perlu diubah)
     <div className="flex items-center justify-between rounded-lg border bg-white/60 px-3 py-2">
       <div className="flex items-center gap-2 text-gray-700">
         {icon}
@@ -520,6 +533,7 @@ export default function Dashboard() {
 
   // =============================== RENDER ==============================
   return (
+    // ... (Bagian Render JSX tidak perlu diubah)
     <div className="flex flex-col w-full">
       <Header />
 

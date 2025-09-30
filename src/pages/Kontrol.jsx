@@ -137,7 +137,7 @@ const DEVICE_CONFIG = {
   kolam_ikan: { title: "Kolam Ikan", icon: Fish, theme: { headerBg: 'bg-blue-500', accentColor: 'text-blue-600' }, devices: { pompa_kolam: { title: "Pompa Air", icon: Waves }, aerator_kolam: { title: "Aerator", icon: Droplet }}},
   cacing_sutra: { title: "Cacing Sutra", icon: Bug, theme: { headerBg: 'bg-amber-600', accentColor: 'text-amber-700' }, devices: { pompa_cacing: { title: "Pompa Air", icon: Waves }, aerator_cacing: { title: "Aerator", icon: Droplet }}},
   hidroponik: { title: "Hidroponik", icon: Sprout, theme: { headerBg: 'bg-emerald-500', accentColor: 'text-emerald-600' }, devices: { pompa_hidroponik: { title: "Pompa Nutrisi", icon: Droplet }, lampu_hidroponik: { title: "Lampu Tumbuh", icon: Lightbulb, hasLevel: true }}},
-  kandang: { title: "Kandang", icon: Home, theme: { headerBg: 'bg-orange-500', accentColor: 'text-orange-600' }, devices: { kipas_kandang: { title: "Kipas Ventilasi", icon: Fan }}},
+  kandang: { title: "Kandang", icon: Home, theme: { headerBg: 'bg-orange-500', accentColor: 'text-orange-600' }, devices: { kipas_kandang: { title: "Kipas Ventilasi", icon: Fan }, kandang_lampu: { title: "Lampu Kandang", icon: Lightbulb, hasLevel: true }}},
 };
 
 const ALL_DEVICE_KEYS = Object.values(DEVICE_CONFIG).flatMap(domain => Object.keys(domain.devices));

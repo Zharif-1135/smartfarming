@@ -8,9 +8,6 @@ import {
   Cloud,
   Sun,
   CloudRain,
-  Thermometer,
-  Droplets,
-  Wind,
   Calendar,
   Fish,
   Bug,
@@ -39,7 +36,7 @@ const LoadingCard = ({ status }) => (
 const WeatherForecast = () => {
   const [forecast, setForecast] = useState(null);
   const [loading, setLoading] = useState(true);
-  
+
   const getWeatherIcon = (iconPhrase) => {
     const p = (iconPhrase || "").toLowerCase();
     if (p.includes("hujan") || p.includes("badai") || p.includes("gerimis")) return <CloudRain className="w-16 h-16 text-blue-500" />;
@@ -49,7 +46,6 @@ const WeatherForecast = () => {
 
   useEffect(() => {
     const fetchForecast = async () => {
-      // ... (logika fetch tetap sama)
       const cacheKey = "weather-forecast-cache";
       const API_KEY = import.meta.env.VITE_ACCUWEATHER_KEY;
       const LOCATION_KEY = "205120";
@@ -60,10 +56,10 @@ const WeatherForecast = () => {
           setForecast(cached.data);
           return;
         }
-        
+
         const res = await fetch(`https://dataservice.accuweather.com/forecasts/v1/daily/1day/${LOCATION_KEY}?apikey=${API_KEY}&language=id&metric=true`);
         if (!res.ok) throw new Error("Gagal mengambil data cuaca dari API.");
-        
+
         const data = await res.json();
         if (data?.DailyForecasts?.[0]) {
           const forecastData = data.DailyForecasts[0];
@@ -83,18 +79,15 @@ const WeatherForecast = () => {
 
   if (loading) return <div className="bg-gray-100 border rounded-2xl p-5 animate-pulse h-[260px]"></div>;
   if (!forecast) return <div className="bg-gray-100 border rounded-2xl p-5 text-center">Gagal memuat prakiraan cuaca.</div>;
-  
-  // --- PERBAIKAN ---
-  // Menambahkan pengecekan `?.` (optional chaining) untuk mencegah error jika struktur data tidak lengkap
+
+  // Variabel yang tidak dibutuhkan (peluang hujan, kelembapan, angin) telah dihapus.
   const maxTemp = forecast.Temperature?.Maximum?.Value || "N/A";
   const minTemp = forecast.Temperature?.Minimum?.Value || "N/A";
   const iconPhrase = forecast.Day?.IconPhrase || "Cuaca tidak diketahui";
-  const rainProb = forecast.Day?.PrecipitationProbability || "N/A";
-  const humidity = forecast.RelativeHumidity?.Average || 'N/A';
-  const windSpeed = forecast.Day?.Wind?.Speed?.Value || "N/A"; // Ini perbaikan utamanya
 
   return (
-    <div className="bg-gradient-to-br from-blue-100 to-cyan-50 border border-blue-300 rounded-2xl shadow-lg p-5 flex flex-col gap-3">
+    // Bagian div di bawah ini telah dihapus
+    <div className="bg-gradient-to-br from-blue-100 to-cyan-50 border border-blue-300 rounded-2xl shadow-lg p-5 flex flex-col gap-3 h-full justify-center">
       <h2 className="font-bold text-xl flex items-center gap-2 text-blue-800"><Cloud /> Prakiraan Cuaca Besok</h2>
       <div className="flex justify-center items-center gap-4 my-3 text-center">
         {getWeatherIcon(iconPhrase)}
@@ -103,14 +96,11 @@ const WeatherForecast = () => {
           <p className="text-lg text-gray-600 capitalize">{iconPhrase}</p>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-3 text-sm text-center">
-        <div className="flex flex-col items-center"><Thermometer className="w-5 h-5 text-red-500 mb-1" /> Peluang Hujan: {rainProb}%</div>
-        <div className="flex flex-col items-center"><Droplets className="w-5 h-5 text-blue-500 mb-1" /> Kelembapan: {humidity}%</div>
-        <div className="flex flex-col items-center"><Wind className="w-5 h-5 text-gray-500 mb-1" /> Angin: {windSpeed} km/j</div>
-      </div>
+      {/* DIV YANG MENAMPILKAN PELUANG HUJAN, KELEMBAPAN, DAN ANGIN TELAH DIHAPUS DARI SINI */}
     </div>
   );
 };
+
 
 const HarvestCard = ({ harvestInfo }) => {
     // ... (Komponen ini tidak perlu diubah)
