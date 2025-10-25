@@ -1,4 +1,4 @@
-// src/pages/Dashboard.js
+// src/pages/Dashboard.jsx
 import { useEffect, useMemo, useState } from "react";
 import { ref, onValue, set } from "firebase/database";
 import { db } from "../firebase";
@@ -28,12 +28,11 @@ import {
   Waves,
 } from "lucide-react";
 
-// ===================== KONFIGURASI ACCUWEATHER ======================
-// Samakan dengan konfigurasi kamu.
-// API KEY: https://developer.accuweather.com/
-// LOCATION_KEY contoh: 205120 (Lhokseumawe)
-const ACCU_API_KEY = "zpka_dd013fe7458d4c34ba195d242ea840d4_1a3c2bfa";
-const ACCU_LOCATION_KEY = "205120";
+// ===================== KONFIGURASI OPENWEATHERMAP ======================
+// Menggunakan API Gratis (data/2.5)
+const OWM_API_KEY = "7efe5acf39a055f8b27dc5055208cc3b";
+const OWM_LAT = 5.18;
+const OWM_LON = 97.15;
 
 // Helper arah angin (derajat -> kompas)
 const toCompass = (deg) => {
@@ -43,6 +42,8 @@ const toCompass = (deg) => {
   const idx = Math.round(deg / 22.5) % 16;
   return dirs[idx];
 };
+
+// (Fungsi uviToText tidak lagi digunakan karena UV Index tidak ada di plan free)
 
 export default function Dashboard() {
   const [data, setData] = useState({
@@ -55,7 +56,7 @@ export default function Dashboard() {
   const [lastUpdate, setLastUpdate] = useState(Date.now());
   const [alerts, setAlerts] = useState([]);
 
-  // =============== CUACA (AccuWeather – kondisi lengkap) ===============
+  // =============== CUACA (OpenWeatherMap – API Gratis /data/2.5) ===============
   const [wxNow, setWxNow] = useState(null);
   const [wxDaily, setWxDaily] = useState(null);
   const [wxLoading, setWxLoading] = useState(true);
@@ -65,21 +66,28 @@ export default function Dashboard() {
     async function loadWeather() {
       try {
         setWxLoading(true);
-        // Current conditions (detail)
+        
+        // PANGGILAN 1: Current Weather (untuk wxNow)
+        // Menggunakan endpoint /data/2.5/weather
         const nowRes = await fetch(
-          `https://dataservice.accuweather.com/currentconditions/v1/${ACCU_LOCATION_KEY}?apikey=${ACCU_API_KEY}&details=true&language=id`
+          `https://api.openweathermap.org/data/2.5/weather?lat=${OWM_LAT}&lon=${OWM_LON}&appid=${OWM_API_KEY}&units=metric&lang=id`
         );
         const now = await nowRes.json();
+        if (now.cod !== 200) throw new Error(now.message || 'Gagal mengambil data cuaca saat ini');
 
-        // 1-Day Forecast (detail)
+        // PANGGILAN 2: 5-Day/3-Hour Forecast (untuk wxDaily)
+        // Menggunakan endpoint /data/2.5/forecast
         const d1Res = await fetch(
-          `https://dataservice.accuweather.com/forecasts/v1/daily/1day/${ACCU_LOCATION_KEY}?apikey=${ACCU_API_KEY}&details=true&metric=true&language=id`
+          `https://api.openweathermap.org/data/2.5/forecast?lat=${OWM_LAT}&lon=${OWM_LON}&appid=${OWM_API_KEY}&units=metric&lang=id`
         );
         const d1 = await d1Res.json();
+        if (d1.cod !== "200") throw new Error(d1.message || 'Gagal mengambil data prakiraan');
 
         if (!canceled) {
-          setWxNow(Array.isArray(now) ? now[0] : null);
-          setWxDaily(d1?.DailyForecasts?.[0] || null);
+          // 'now' adalah objek utuh dari /weather
+          setWxNow(now); 
+          // 'd1.list[0]' adalah prakiraan 3 jam ke depan
+          setWxDaily(d1?.list?.[0] || null); 
         }
       } catch (e) {
         console.error("Gagal ambil data cuaca:", e);
@@ -87,7 +95,7 @@ export default function Dashboard() {
         if (!canceled) setWxLoading(false);
       }
     }
-    if (ACCU_API_KEY && ACCU_LOCATION_KEY) loadWeather();
+    if (OWM_API_KEY && OWM_LAT && OWM_LON) loadWeather();
     return () => {
       canceled = true;
     };
@@ -95,6 +103,7 @@ export default function Dashboard() {
 
   // ===================== SENSOR REALTIME & HISTORY =====================
   useEffect(() => {
+    // ... (FungSI ini tidak diubah) ...
     const sensorRef = ref(db, "sensor");
     const unsub = onValue(sensorRef, (snapshot) => {
       const val = snapshot.val();
@@ -128,6 +137,7 @@ export default function Dashboard() {
   }, []);
 
   // ========================= UTIL & STATUS ============================
+  // ... (Fungsi toNum, getStatus, generateAlerts, overallSeverity, getSystemStatusBoxes tidak diubah) ...
   const toNum = (v) => {
     if (v === "-" || v === null || v === undefined || v === "") return NaN;
     const n = parseFloat(v);
@@ -158,13 +168,11 @@ export default function Dashboard() {
   function generateAlerts(val, nowTime) {
     const list = [];
     
-    // --- PERUBAHAN DI SINI ---
-    // Membuat pemetaan dari nama domain internal ke nama yang ditampilkan di UI
     const domainDisplayNames = {
       kolam: "Kolam Ikan",
       hidroponik: "Hidroponik",
       kandang: "Kandang",
-      ulat: "Cacing Sutra", // Ini adalah perubahan utamanya
+      ulat: "Cacing Sutra", 
     };
 
     const pushAlert = (id, severity, title, detail) => {
@@ -174,7 +182,6 @@ export default function Dashboard() {
     const sections = ["kolam", "hidroponik", "kandang", "ulat"];
     sections.forEach((s) => {
       if (!val[s]) {
-        // Menggunakan nama dari `domainDisplayNames`
         const displayName = domainDisplayNames[s] || capitalize(s);
         pushAlert(
           `${s}-missing`,
@@ -190,7 +197,6 @@ export default function Dashboard() {
       if (Number.isNaN(num)) return;
       const res = classify(domain, metric, num, extras);
       if (res.level !== "ok") {
-        // Menggunakan nama dari `domainDisplayNames`
         const displayName = domainDisplayNames[domain] || capitalize(domain);
         pushAlert(
           `${domain}-${metric}`,
@@ -201,7 +207,6 @@ export default function Dashboard() {
       }
     };
 
-    // kolam - menyamakan dengan monitoring.jsx
     checkParam("kolam", "suhu", val.kolam?.suhu);
     checkParam("kolam", "ph", val.kolam?.ph);
     checkParam("kolam", "oksigen", val.kolam?.oksigen);
@@ -209,29 +214,21 @@ export default function Dashboard() {
       ph: val.kolam?.ph,
       suhu: val.kolam?.suhu,
     });
-
-    // ulat (cacing sutra) - menyamakan dengan monitoring.jsx
     checkParam("ulat", "suhu", val.ulat?.suhu);
     checkParam("ulat", "ph", val.ulat?.ph);
     checkParam("ulat", "oksigen", val.ulat?.oksigen);
     checkParam("ulat", "amonia_total", val.ulat?.amonia);
-
-    // kandang - menyamakan dengan monitoring.jsx
     checkParam("kandang", "suhu", val.kandang?.suhu, {
       kelembaban: toNum(val.kandang?.kelembaban),
     });
     checkParam("kandang", "kelembaban", val.kandang?.kelembaban);
     checkParam("kandang", "amonia", val.kandang?.kualitas_udara);
     checkParam("kandang", "intensitas_cahaya", val.kandang?.pencahayaan);
-
-    // hidroponik - menyamakan dengan monitoring.jsx
     checkParam("hidroponik", "ph", val.hidroponik?.ph);
     checkParam("hidroponik", "suhu", val.hidroponik?.suhu);
     checkParam("hidroponik", "kelembaban", val.hidroponik?.kelembaban);
     checkParam("hidroponik", "intensitas_cahaya", val.hidroponik?.intensitas_cahaya);
     checkParam("hidroponik", "ec", val.hidroponik?.aliran_nutrisi);
-
-    // sensor stale
     if (Date.now() - nowTime > 60000) {
       pushAlert(
         "data-stale",
@@ -240,7 +237,6 @@ export default function Dashboard() {
         "Tidak menerima data baru dalam 60 detik. Periksa koneksi."
       );
     }
-
     if (list.length === 0) {
       list.push({
         id: "ok",
@@ -249,34 +245,27 @@ export default function Dashboard() {
         detail: "Tidak ditemukan anomali. Sistem bekerja normal.",
       });
     }
-
     return list;
   }
 
   const overallSeverity = (alertsArr) => {
-    // ... (Fungsi ini tidak perlu diubah)
     if (!alertsArr || alertsArr.length === 0) return "info";
     if (alertsArr.some((a) => a.severity === "danger")) return "danger";
     if (alertsArr.some((a) => a.severity === "warning")) return "warning";
     return "info";
   };
 
-  // ===================== MODIFIKASI SYSTEM STATUS =====================
   const getSystemStatusBoxes = (alertsList) => {
-    // ... (Fungsi ini tidak perlu diubah)
     const sections = [
       { id: "kolam", label: "Kolam Ikan", data: data.kolam },
       { id: "hidroponik", label: "Hidroponik", data: data.hidroponik },
       { id: "kandang", label: "Kandang", data: data.kandang },
       { id: "ulat", label: "Cacing Sutra", data: data.ulat }
     ];
-
     const inactiveSections = [];
-    
     sections.forEach((section) => {
       const sectionData = section.data;
       let isActive = false;
-      
       if (sectionData) {
         const values = Object.values(sectionData);
         isActive = values.some(value => 
@@ -286,11 +275,9 @@ export default function Dashboard() {
           value !== ""
         );
       }
-      
       const hasMissingAlert = (alertsList || []).some(alert => 
         alert.id === `${section.id}-missing`
       );
-      
       if (!isActive || hasMissingAlert) {
         inactiveSections.push({
           id: section.id,
@@ -299,11 +286,9 @@ export default function Dashboard() {
         });
       }
     });
-
     if (inactiveSections.length > 0) {
       return inactiveSections.slice(0, 4);
     }
-
     return [{ 
       id: "all-ok", 
       label: "Semua sistem online", 
@@ -311,9 +296,10 @@ export default function Dashboard() {
     }];
   };
 
+
   // ========================= UI COMPONENTS ============================
+  // ... (Komponen Badge, CategoryCard, PeringatanTerbaru tidak diubah) ...
   const Badge = ({ severity, children }) => {
-    // ... (Komponen ini tidak perlu diubah)
     const map = {
       danger: "bg-red-500 text-white",
       warning: "bg-yellow-500 text-white",
@@ -327,7 +313,6 @@ export default function Dashboard() {
   };
 
   const CategoryCard = ({ title, items, status, icon: Icon }) => (
-    // ... (Komponen ini tidak perlu diubah)
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
@@ -365,7 +350,6 @@ export default function Dashboard() {
   );
 
   const PeringatanTerbaru = ({ alertsList }) => {
-    // ... (Komponen ini tidak perlu diubah)
     const sev = overallSeverity(alertsList);
     const styleMap = {
       danger: "bg-red-50 border-red-400 text-red-800",
@@ -430,7 +414,7 @@ export default function Dashboard() {
   };
 
   // ========================= STATUS DOMAIN ============================
-  // ... (Bagian ini tidak perlu diubah)
+  // ... (Bagian ini tidak diubah) ...
   const kolamStatus = getStatus("kolam", "suhu", data.kolam.suhu);
   const hidroStatus = getStatus("hidroponik", "suhu", data.hidroponik.suhu);
   const kandangStatus = getStatus("kandang", "suhu", data.kandang.suhu, {
@@ -450,25 +434,34 @@ export default function Dashboard() {
   }, [lastUpdate]);
 
   // ========================= WEATHER VIEW (detailed) ==================
+  // ===== DIUBAH UNTUK API GRATIS (/weather & /forecast) =====
   const WeatherDetail = () => {
-    // ... (Komponen ini tidak perlu diubah)
-    const now = wxNow;
-    const d1 = wxDaily;
-    const uv = now?.UVIndex;
-    const uvCat = now?.UVIndexText || "-";
-    const windSp = now?.Wind?.Speed?.Metric?.Value;
-    const windDir = now?.Wind?.Direction?.Degrees;
-    const gust = now?.WindGust?.Speed?.Metric?.Value;
-    const humid = now?.RelativeHumidity;
-    const dew = now?.DewPoint?.Metric?.Value;
-    const temp = now?.Temperature?.Metric?.Value;
-    const realFeel = now?.RealFeelTemperature?.Metric?.Value;
-    const vis = now?.Visibility?.Metric?.Value;
-    const cloudCover = now?.CloudCover;
-    const pressure = now?.Pressure?.Metric?.Value;
-    const ceiling = now?.Ceiling?.Metric?.Value;
-    const rainProb = d1?.Day?.PrecipitationProbability ?? d1?.Night?.PrecipitationProbability;
-    const tStormProb = d1?.Day?.ThunderstormProbability ?? d1?.Night?.ThunderstormProbability;
+    const now = wxNow; // OWM 'weather' object
+    const d1 = wxDaily; // OWM 'forecast.list[0]' object
+
+    // Mapping data OWM dari /weather
+    // OWM wind_speed -> m/s, konversi ke km/j ( * 3.6)
+    const windSp = now?.wind?.speed * 3.6;
+    const windDir = now?.wind?.deg;
+    // OWM wind_gust -> m/s, konversi ke km/j ( * 3.6)
+    const gust = now?.wind?.gust * 3.6;
+    const humid = now?.main?.humidity;
+    const temp = now?.main?.temp;
+    const realFeel = now?.main?.feels_like;
+    // OWM visibility -> meters, konversi ke km ( / 1000)
+    const vis = now?.visibility / 1000;
+    const cloudCover = now?.clouds?.all;
+    const pressure = now?.main?.pressure; // OWM hPa == mb
+    
+    // Mapping data OWM dari /forecast (list[0])
+    // OWM pop (prob. of precipitation) -> 0..1, konversi ke % ( * 100)
+    const rainProb = d1?.pop * 100;
+    
+    // OWM (dt) adalah UNIX timestamp, konversi ke Date
+    const obsTime = now?.dt ? new Date(now.dt * 1000) : null;
+    
+    // Frasa cuaca dari list[0]
+    const d1Phrase = d1?.weather?.[0]?.description || "-";
 
     return (
       <motion.div
@@ -483,25 +476,27 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-2 text-xs text-gray-600">
             <Clock className="w-4 h-4" />
-            {now?.LocalObservationDateTime
-              ? new Date(now.LocalObservationDateTime).toLocaleString()
-              : "–"}
+            {obsTime ? obsTime.toLocaleString() : "–"}
           </div>
         </div>
 
+        {/* Data yang tersedia di plan FREE */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
           <MetricRow icon={<Thermometer className="w-4 h-4" />} label="Suhu" value={fmt(temp, "°C")} />
-          <MetricRow icon={<Thermometer className="w-4 h-4" />} label="Suhu Seperti®" value={fmt(realFeel, "°C")} />
+          <MetricRow icon={<Thermometer className="w-4 h-4" />} label="Suhu Seperti" value={fmt(realFeel, "°C")} />
           <MetricRow icon={<Droplet className="w-4 h-4" />} label="Kelembaban" value={fmt(humid, "%")} />
-          <MetricRow icon={<Droplet className="w-4 h-4" />} label="Titik Embun" value={fmt(dew, "°C")} />
-          <MetricRow icon={<Sun className="w-4 h-4" />} label="UV Index" value={`${uv ?? "-"} (${uvCat})`} />
-          <MetricRow icon={<Cloud className="w-4 h-4" />} label="Tutupan Awan" value={fmt(cloudCover, "%")} />
           <MetricRow icon={<Wind className="w-4 h-4" />} label="Angin" value={`${fmt(windSp, "km/j")}, ${toCompass(windDir)}`} />
-          <MetricRow icon={<Wind className="w-4 h-4" />} label="Tiupan" value={fmt(gust, "km/j")} />
+          {Number.isFinite(gust) && gust > 0 && (
+            <MetricRow icon={<Wind className="w-4 h-4" />} label="Tiupan" value={fmt(gust, "km/j")} />
+          )}
+          <MetricRow icon={<Cloud className="w-4 h-4" />} label="Tutupan Awan" value={fmt(cloudCover, "%")} />
           <MetricRow icon={<Gauge className="w-4 h-4" />} label="Tekanan" value={fmt(pressure, "mb")} />
-          <MetricRow icon={<Cloud className="w-4 h-4" />} label="Tinggi Awan" value={fmt(ceiling, "m")} />
-          <MetricRow icon={<CloudRain className="w-4 h-4" />} label="Prob. Hujan" value={fmt(rainProb, "%")} />
-          <MetricRow icon={<AlertTriangle className="w-4 h-4" />} label="Prob. Badai" value={fmt(tStormProb, "%")} />
+          <MetricRow icon={<Activity className="w-4 h-4" />} label="Visibilitas" value={fmt(vis, "km")} />
+          <MetricRow icon={<CloudRain className="w-4 h-4" />} label="Prob. Presipitasi" value={fmt(rainProb, "%")} />
+          
+          {/* Data ini tidak ada di plan free, jadi kita tampilkan N/A */}
+          <MetricRow icon={<Sun className="w-4 h-4 text-gray-400" />} label="UV Index" value={"N/A (Paid)"} />
+          <MetricRow icon={<Droplet className="w-4 h-4 text-gray-400" />} label="Titik Embun" value={"N/A (Paid)"} />
         </div>
 
         {d1 && (
@@ -509,7 +504,7 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <CloudSun className="w-4 h-4 text-sky-500" />
               <span>
-                Siang: {d1?.Day?.ShortPhrase || "-"}; Malam: {d1?.Night?.ShortPhrase || "-"}
+                Prakiraan (3 Jam): {capitalize(d1Phrase)}
               </span>
             </div>
           </div>
@@ -519,7 +514,7 @@ export default function Dashboard() {
   };
 
   const MetricRow = ({ icon, label, value }) => (
-    // ... (Komponen ini tidak perlu diubah)
+    // ... (Komponen ini tidak diubah)
     <div className="flex items-center justify-between rounded-lg border bg-white/60 px-3 py-2">
       <div className="flex items-center gap-2 text-gray-700">
         {icon}
@@ -528,12 +523,12 @@ export default function Dashboard() {
       <span className="font-semibold">{value}</span>
     </div>
   );
-
-  const fmt = (v, unit) => (Number.isFinite(v) ? `${v.toFixed?.(unit === "m" ? 0 : 1)} ${unit}` : "-");
+  
+  const fmt = (v, unit) => (Number.isFinite(v) ? `${v.toFixed?.(1)} ${unit}` : "-");
 
   // =============================== RENDER ==============================
   return (
-    // ... (Bagian Render JSX tidak perlu diubah)
+    // ... (Bagian Render JSX tidak diubah)
     <div className="flex flex-col w-full">
       <Header />
 

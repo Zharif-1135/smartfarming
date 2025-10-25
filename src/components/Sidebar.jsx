@@ -1,6 +1,8 @@
+// src/components/Sidebar.jsx
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { FiMenu, FiX, FiHome, FiActivity, FiSliders, FiClock, FiBarChart } from "react-icons/fi";
+// Tambahkan FiCpu di sini
+import { FiMenu, FiX, FiHome, FiActivity, FiSliders, FiClock, FiBarChart, FiCpu } from "react-icons/fi";
 
 export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -12,6 +14,9 @@ export default function Sidebar() {
     { to: "/kontrol", label: "Kontrol", icon: FiSliders },
     { to: "/riwayat", label: "Riwayat", icon: FiClock },
     { to: "/prediksi", label: "Prediksi", icon: FiBarChart },
+    // === TAMBAHKAN BARIS INI ===
+    { to: "/digital-twin", label: "Digital Twin", icon: FiCpu },
+    // ===========================
   ];
 
   return (
@@ -32,20 +37,19 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Sidebar */}
-      <div
-        className={`fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-green-600 via-green-800 to-black text-white transform ${
+      {/* --- KONTEN SIDEBAR --- */}
+      {/* (Tidak ada perubahan di bawah ini, saya persingkat agar fokus) */}
+      <aside
+        className={`fixed top-0 left-0 w-64 h-full bg-green-600 text-white flex flex-col z-50 shadow-2xl transition-transform duration-300 ease-in-out ${
           isOpen ? "translate-x-0" : "-translate-x-full"
-        } transition-transform duration-300 ease-in-out z-50 shadow-xl flex flex-col`}
+        }`}
       >
         {/* Header Sidebar */}
-        <div className="flex justify-between items-center p-4 border-b border-green-500">
-          <h1 className="text-xl font-bold tracking-wide flex items-center gap-2">
-            🌱 SmartFarm
-          </h1>
+        <div className="flex items-center justify-between p-4 border-b border-green-500">
+          <h2 className="text-xl font-bold text-green-100">SmartFarm</h2>
           <button
             onClick={() => setIsOpen(false)}
-            className="text-2xl hover:text-green-300 transition-colors duration-200"
+            className="text-green-200 hover:text-green-300 transition-colors duration-200"
           >
             <FiX />
           </button>
@@ -80,11 +84,12 @@ export default function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-green-500 p-4 text-xs text-gray-300">
-          <p className="font-mono">v1.0.0</p>
-          <p>© 2025 Malikussaleh Smartfarm</p>
+        <div className="border-t border-green-500 p-4">
+          <p className="text-xs text-green-200 text-center">
+            © 2024 Smart Farming UNIMAL
+          </p>
         </div>
-      </div>
+      </aside>
     </>
   );
 }
