@@ -170,7 +170,7 @@ export default function DigitalTwin() {
   // --- Logika Status Panel 2D (Tidak berubah) ---
   const phStatus = klass("hidroponik", "ph", dataHidroponik.ph);
   const suhuStatus = klass("hidroponik", "suhu", dataHidroponik.suhu);
-  const ecStatus = klass("hidroponik", "aliran_nutrisi", dataHidroponik.aliran_nutrisi);
+  const ecStatus = klass("hidroponik", "ec", dataHidroponik.aliran_nutrisi);
   const kelembabanStatus = klass("hidroponik", "kelembaban", dataHidroponik.kelembaban);
   const cahayaStatus = klass("hidroponik", "intensitas_cahaya", dataHidroponik.intensitas_cahaya);
 
