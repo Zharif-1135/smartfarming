@@ -26,7 +26,6 @@ import Cabbage from "../components/models/Cabbage";
 import { klass } from "../utils/Threshold.js"; 
 
 // --- Komponen SensorStatusCard (Tidak berubah) ---
-// ... (kode SensorStatusCard)
 const statusStyles = {
   ok: { icon: CheckCircle, color: "text-green-600", bg: "bg-green-50", border: "border-green-300" },
   warning: { icon: AlertTriangle, color: "text-yellow-600", bg: "bg-yellow-50", border: "border-yellow-300" },
@@ -59,7 +58,6 @@ const SensorStatusCard = memo(({ icon: Icon, label, value, unit, statusKey, targ
 SensorStatusCard.displayName = 'SensorStatusCard';
 
 // --- Komponen WeatherCard (Tidak berubah) ---
-// ... (kode WeatherCard)
 const WeatherCard = ({ icon: Icon, label, value, unit }) => (
   <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center gap-3">
     <div className="flex-shrink-0">
@@ -78,7 +76,6 @@ const WeatherCard = ({ icon: Icon, label, value, unit }) => (
 );
 
 // --- Fungsi helper cuaca (Tidak berubah) ---
-// ... (kode getWeatherIcon, degToCompass, msToKmh, mToKm, formatTime, capitalizeWords)
 const getWeatherIcon = (iconCode) => {
   if (!iconCode) return Cloudy;
   if (iconCode.startsWith('01')) return iconCode.endsWith('d') ? SunMedium : Moon;
@@ -151,9 +148,35 @@ export default function DigitalTwin() {
     const sensorRef = ref(db, 'sensor');
     const unsubSensor = onValue(sensorRef, (snapshot) => setSensorData(snapshot.val() || {}));
     const kontrolRef = ref(db, 'kontrol');
-    const unsubKontrol = onValue(kontrolRef, (snapshot) => setKontrolData(snapshot.val() || {}));
+    // Mengambil data kontrol dengan key yang benar
+    const unsubKontrol = onValue(kontrolRef, (snapshot) => {
+      const fbData = snapshot.val() || {};
+      // Normalisasi data kontrol agar selalu berupa objek { state: 'ON'/'OFF', level: 0-100 }
+      const normalizeControl = (data) => {
+        if (typeof data === 'string') return { state: data, level: data === 'ON' ? 100 : 0 };
+        return { state: data?.state ?? 'OFF', level: data?.level ?? 0 };
+      };
+
+      setKontrolData({
+        pompa_hidroponik: normalizeControl(fbData.pompa_hidroponik),
+        lampu_hidroponik: normalizeControl(fbData.lampu_hidroponik),
+        // Tambahkan kontrol lain jika diperlukan
+      });
+    });
     return () => { unsubSensor(); unsubKontrol(); };
   }, []);
+
+  // --- KODE BARU: Menarik data kontrol yang disinkronkan ---
+  const KONTROL_KEY_POMPA = 'pompa_hidroponik';
+  const KONTROL_KEY_LAMPU = 'lampu_hidroponik';
+
+  const pompaData = kontrolData[KONTROL_KEY_POMPA] || { state: 'OFF', level: 0 };
+  const lampuData = kontrolData[KONTROL_KEY_LAMPU] || { state: 'OFF', level: 0 };
+  
+  const pompaState = pompaData.state;
+  const lampuState = lampuData.state;
+  const lampuLevel = lampuData.level;
+  // --------------------------------------------------------
 
   const dataHidroponik = sensorData.hidroponik || {};
   const dataForCabbage = dataHidroponik;
@@ -187,7 +210,6 @@ export default function DigitalTwin() {
       </div>
 
       {/* --- Panel Ringkasan Cuaca (Tidak berubah) --- */}
-      {/* ... (kode panel cuaca) ... */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 bg-gradient-to-br from-blue-500 to-indigo-600 text-white p-6 rounded-2xl shadow-lg flex items-center gap-6">
           {weatherLoading ? (
@@ -244,7 +266,7 @@ export default function DigitalTwin() {
         </div>
       </div>
       
-      {/* --- Panggung 3D (DIPERBARUI) --- */}
+      {/* --- Panggung 3D (DIPERBARUI untuk sinkronisasi) --- */}
       <div className="w-full h-[500px] bg-gray-100 rounded-2xl shadow-lg border relative overflow-hidden">
         <Loader />
         <Canvas 
@@ -255,9 +277,13 @@ export default function DigitalTwin() {
           <Suspense fallback={null}>
             <ambientLight intensity={isDayTime ? 0.6 : 0.2} />
             
-            {/* ... (Efek Level 1 & 2 tidak berubah) ... */}
-            <GrowLight visible={kontrolData.lampu === 'ON'} />
-            <NutrientDrip visible={kontrolData.pompa_nutrisi === 'ON'} />
+            {/* Menggunakan state kontrol yang baru */}
+            <GrowLight 
+                visible={lampuState === 'ON'} 
+                intensity={lampuLevel / 100} // Asumsi GrowLight menerima intensity 0-1
+            />
+            <NutrientDrip visible={pompaState === 'ON'} />
+
             <SunEffect visible={isDayTime && !isRaining} />
             <RainEffect visible={isRaining} />
             <WindEffect visible={isWindy} speed={windSpeed} /> 
@@ -272,9 +298,6 @@ export default function DigitalTwin() {
               position={[0, 1.75, 0]}
             />
             
-            {/* --- LANTAI DIGANTI --- */}
-            {/* <DynamicGround ... /> Dihapus */}
-
             {/* BARU: Lantai rumput 3D asli */}
             <InstancedGrass 
               windSpeed={windSpeed}
@@ -293,8 +316,7 @@ export default function DigitalTwin() {
         </Canvas>
       </div>
 
-      {/* --- PANEL 2D TERPADU (Tidak berubah) --- */}
-      {/* ... (kode panel 2D) ... */}
+      {/* --- PANEL 2D TERPADU (DIPERBARUI untuk sinkronisasi) --- */}
       <div className="bg-white p-4 sm:p-6 rounded-lg shadow border">
         <h3 className="font-bold text-xl mb-4 flex items-center gap-2">
           <Sprout className="text-green-600" />
@@ -329,20 +351,22 @@ export default function DigitalTwin() {
           <div className="lg:col-span-4">
             <h4 className="text-lg font-semibold text-gray-700 mb-3">Status Kontrol Aktif</h4>
             <div className="space-y-4">
+              {/* MENGGUNAKAN pompaState BARU */}
               <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border">
                 <span className="font-semibold text-gray-700">Pompa Nutrisi</span>
                 <span className={`font-bold text-md px-3 py-1 rounded-full ${
-                  kontrolData.pompa_nutrisi === 'ON' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                  pompaState === 'ON' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
                 }`}>
-                  {kontrolData.pompa_nutrisi ?? 'OFF'}
+                  {pompaState}
                 </span>
               </div>
+              {/* MENGGUNAKAN lampuState dan lampuLevel BARU */}
               <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border">
                 <span className="font-semibold text-gray-700">Lampu Tumbuh</span>
                 <span className={`font-bold text-md px-3 py-1 rounded-full ${
-                  kontrolData.lampu === 'ON' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
+                  lampuState === 'ON' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
                 }`}>
-                  {kontrolData.lampu ?? 'OFF'}
+                  {lampuState} ({lampuLevel}%)
                 </span>
               </div>
             </div>
