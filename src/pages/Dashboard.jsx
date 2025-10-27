@@ -493,10 +493,6 @@ export default function Dashboard() {
           <MetricRow icon={<Gauge className="w-4 h-4" />} label="Tekanan" value={fmt(pressure, "mb")} />
           <MetricRow icon={<Activity className="w-4 h-4" />} label="Visibilitas" value={fmt(vis, "km")} />
           <MetricRow icon={<CloudRain className="w-4 h-4" />} label="Prob. Presipitasi" value={fmt(rainProb, "%")} />
-          
-          {/* Data ini tidak ada di plan free, jadi kita tampilkan N/A */}
-          <MetricRow icon={<Sun className="w-4 h-4 text-gray-400" />} label="UV Index" value={"N/A (Paid)"} />
-          <MetricRow icon={<Droplet className="w-4 h-4 text-gray-400" />} label="Titik Embun" value={"N/A (Paid)"} />
         </div>
 
         {d1 && (
